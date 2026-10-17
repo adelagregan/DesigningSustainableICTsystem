@@ -2,49 +2,50 @@
 # Computes the numbers in our Environmental Impact Assessment.
 # Run with: python3 footprint_model.py
 #
-# Sources are given as bib keys from our report. "assumed" means our own estimate.
+# "assumed" means our own estimate.
 
 base = {
     # field unit
     "mode": "gated",          # gated (our design), always_on, or continuous
-    "p_idle": 0.6,            # W, Pi Zero 2 W idle [cnxsoftwarepizero2w]
-    "p_load": 2.5,            # W, Pi under load [geerlingzero2]
-    "p_sleep": 0.005,         # W, microcontroller + PIR (assumed, datasheets give < 1 mW)
-    "e_boot": 30,             # J per daily boot (assumed)
-    "e_capture": 1.0,         # J per photo (assumed)
-    "e_detect": 5.0,          # J per MegaDetector run (assumed: ~2 s at 2.5 W)
-    "e_classify": 0.5,        # J per classification (assumed)
+    "p_idle": 0.6,            # W, Pi Zero 2 W idle 
+    "p_load": 2.5,            # W, Pi under load 
+    "p_sleep": 0.005,         # W, ESP32 deep sleep + PIR + regulator (assumed, datasheets give < 1 mW)
+    "e_boot": 45,             # J per day: Pi boot 30 s at 1 W + copy 10 s at 1.5 W (assumed)
+    "e_capture": 2.0,         # J per photo: camera + ESP32 ~1 s at ~1 W, plus IR flash at night (assumed)
+    "e_detect": 7.5,          # J per detection: ~3 s at 2.5 W (YOLO11n takes 2.7 s in NCNN)
+    "e_classify": 0.0,        # J per crop; 0 because our fine-tuned detector also classifies
     "triggers": 50,           # per day (assumed)
     "animal_share": 0.3,      # share of triggers with an animal (assumed)
 
     # battery and panel sizing
     "backup_days": 3,         # assumed
     "dod": 0.8,               # usable battery capacity (assumed)
-    "min_battery_wh": 5,      # smallest practical battery (assumed)
-    "sun_hours": 4.5,         # [malaysiasolar]
+    "min_battery_wh": 5,      # one 3.2 V, 1.5 Ah LFP cell = 4.8 Wh 
+    "sun_hours": 4.5,         # 
     "efficiency": 0.7,        # assumed
-    "sunlight": 0.25,         # share of sun in a canopy gap (assumed, 10-50% [canopygaps])
-    "min_panel_w": 2,         # smallest practical panel (assumed)
+    "sunlight": 0.25,         # share of sun in a canopy gap (assumed, 10-50% )
+    "min_panel_w": 2,         # smallest common small panel 
 
     # manufacturing emissions
-    "ef_battery": 95,         # kg CO2e/kWh [lfp2024, ademelfp]
-    "ef_panel": 515,          # kg CO2e/kW [gecsolar]
-    "core_kg": 8.0,           # board, camera, PIR, housing, SD (TODO: from our component table)
-    "mcu_kg": 0.5,            # microcontroller, only in our design (assumed)
-    "batteries": 1,           # over 3 years [preger2020]
-    "panels": 1.5,            # over 3 years (assumed)
+    "ef_battery": 95,         # kg CO2e/kWh, middle of 56-130 
+    "ef_panel": 515,          # kg CO2e/kWp, middle of 400-630 
+    "core_kg": 8.0,           # Pi, camera, IR flash, PIR, SD cards, charger, housing (estimated)
+    "mcu_kg": 0.5,            # ESP32, only in our design (estimated)
+    "batteries": 1,           # over 3 years 
+    "panels": 1.5,            # over 3 years: 2-year life, second panel reused afterwards
 
     # training (done once for the whole fleet)
-    "gpu_kw": 0.07,           # [nvidiat4]
-    "pue": 1.2,               # [li2023thirsty]
-    "grid_training": 0.48,    # kg CO2e/kWh [emberglobal2024]
+    "gpu_kw": 0.07,           # 
+    "pue": 1.2,               # slightly above the US average of 1.17 
+    "grid_training": 0.48,    # kg CO2e/kWh
     "configs": 20,            # assumed
-    "extract_h": 0.5,         # assumed
-    "config_h": 0.05,         # assumed
-    "reuse_crops": True,
+    "label_pass_h": 0.5,      # one MegaDetector pass to create boxes for labelling (assumed)
+    "config_h": 0.5,          # per configuration, head-only fine-tuning (estimated)
+    "full_finetune_h": 1.25,  # per configuration if the whole network is trained (~3x per step)
+    "full_finetune": False,
 
     # transport
-    "ef_car": 0.25,           # kg CO2e/km (assumed, DEFRA average car is 0.16 [defraconversion])
+    "ef_car": 0.25,           # kg CO2e/km (assumed, DEFRA average petrol car is 0.16)
     "km_per_trip": 150,       # assumed
     "units_per_trip": 10,     # assumed
     "trips_per_year": 1,
@@ -52,7 +53,7 @@ base = {
     "years": 3,
     "fleet": 50,              # assumed
 
-    # water (training only) [li2023thirsty]
+    # water (training only) 
     "wue_on": 0.55,
     "wue_off": 3.14,
 }
@@ -71,10 +72,8 @@ def energy_per_day(p):
 
 
 def training_kwh(p):
-    if p["reuse_crops"]:
-        hours = p["extract_h"] + p["configs"] * p["config_h"]
-    else:
-        hours = p["configs"] * (p["extract_h"] + p["config_h"])
+    per_config = p["full_finetune_h"] if p["full_finetune"] else p["config_h"]
+    hours = p["label_pass_h"] + p["configs"] * per_config
     return p["gpu_kw"] * hours * p["pue"]
 
 
@@ -105,8 +104,8 @@ def with_changes(**changes):
 total, parts, battery_wh, panel_w = footprint(base)
 print("Our design")
 print(f"  energy: {energy_per_day(base):.2f} Wh/day (always-on Pi would idle at {base['p_idle'] * 24:.1f} Wh/day)")
-print(f"  training: {training_kwh(base):.2f} kWh, without reusing crops "
-      f"{training_kwh(with_changes(reuse_crops=False)):.2f} kWh")
+print(f"  training: {training_kwh(base):.2f} kWh, fine-tuning the whole network "
+      f"{training_kwh(with_changes(full_finetune=True)):.2f} kWh")
 print(f"  battery {battery_wh:.0f} Wh, panel {panel_w:.0f} W")
 for name, value in parts.items():
     print(f"  {name:10s} {value:6.2f} kg ({value / total:.0%})")
@@ -120,15 +119,27 @@ print(f"  training water: {water:.2f} L")
 print("\nDecision table")
 decisions = {
     "Continuous inference, no PIR": with_changes(mode="continuous"),
-    "Store all images (4 trips/year)": with_changes(trips_per_year=4),
+    "Collect photos by hand (4 trips/year)": with_changes(trips_per_year=4),
     "Pi always on": with_changes(mode="always_on"),
     "MegaDetector V5 (>= 300 J/photo)": with_changes(e_detect=300),
+    "MDV6-yolov10-e (~24x compute, 180 J)": with_changes(e_detect=180),
     "Replace battery yearly": with_changes(batteries=3),
-    "Don't reuse crops in training": with_changes(reuse_crops=False),
+    "Detector + separate classifier": with_changes(e_classify=0.5),
+    "Fine-tune whole detector": with_changes(full_finetune=True),
 }
 for name, p in decisions.items():
     t, _, b, pv = footprint(p)
-    print(f"  {name:34s} {t:6.1f} kg ({t / total - 1:+.0%}), battery {b:.0f} Wh, panel {pv:.0f} W")
+    print(f"  {name:38s} {t:6.1f} kg ({t / total - 1:+.0%}), battery {b:.0f} Wh, panel {pv:.0f} W")
+
+t, _, b, pv = footprint(with_changes(e_detect=180, triggers=250))
+print(f"  {'MDV6-yolov10-e at 250 triggers/day':38s} {t:6.1f} kg ({t / total - 1:+.0%})")
+
+# --- recommendations ---
+print("\nRecommendations")
+for name, p in {"Maintenance during ranger patrols": with_changes(trips_per_year=0),
+                "20 units per trip": with_changes(units_per_trip=20)}.items():
+    t = footprint(p)[0]
+    print(f"  {name:38s} {t:6.1f} kg ({t / total - 1:+.0%})")
 
 # --- sensitivity: change one assumption at a time ---
 print("\nSensitivity (low -- high)")
