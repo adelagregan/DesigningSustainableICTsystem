@@ -12,6 +12,7 @@ base = {
     "p_sleep": 0.005,         # W, ESP32 deep sleep + PIR + regulator (assumed, datasheets give < 1 mW)
     "e_boot": 45,             # J per day: Pi boot 30 s at 1 W + copy 10 s at 1.5 W (assumed)
     "e_capture": 2.0,         # J per photo: camera + ESP32 ~1 s at ~1 W, plus IR flash at night (assumed)
+    "e_ble": 6.0,             # J per trigger: ESP32 advertises over Bluetooth ~20 s at ~0.3 W (assumed)
     "e_detect": 7.5,          # J per detection: ~3 s at 2.5 W (YOLO11n takes 2.7 s in NCNN)
     "e_classify": 0.0,        # J per crop; 0 because our fine-tuned detector also classifies
     "triggers": 50,           # per day (assumed)
@@ -61,8 +62,8 @@ base = {
 
 def energy_per_day(p):
     """Energy the unit uses per day, in Wh."""
-    photos = p["triggers"] * (p["e_capture"] + p["e_detect"]
-                              + p["animal_share"] * p["e_classify"]) / 3600
+    photos = p["triggers"] * (p["e_capture"] + p["e_ble"] + p["e_detect"]
+                            + p["animal_share"] * p["e_classify"]) / 3600
     if p["mode"] == "gated":
         return p["p_sleep"] * 24 + p["e_boot"] / 3600 + photos
     if p["mode"] == "always_on":
